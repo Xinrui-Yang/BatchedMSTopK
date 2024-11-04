@@ -1,1 +1,1 @@
-# MSTopk
+# BatchedMSTopK
