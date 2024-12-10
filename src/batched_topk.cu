@@ -30,40 +30,59 @@ struct StepInfo
     int random_pos;
 };
 
-__global__ void SetStepInfo(float* temp, StepInfo** info, int level) {
-  info[0] = (StepInfo*)(temp + 1024);
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < level; i += gridDim.x * blockDim.x){
-    info[i] = (StepInfo*)(info[0] + 1024 * i);
-  }
-}
+// __global__ void SetStepInfo(float* temp, StepInfo* info, int level) {
+//   info[0] = (StepInfo*)(temp + 1024);
+//   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < level; i += gridDim.x * blockDim.x){
+//     // info[i] = (StepInfo*)(info[0] + 1024 * i);
+//     info[i] = (StepInfo*)(info[0] + i);
+//   }
+// }
 
-__global__ void InitStepInfo(StepInfo** info, int col, int level) {
+// __global__ void InitStepInfo(StepInfo** info, int col, int level) {
+//   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < level; i += gridDim.x * blockDim.x) {
+//     info[i]->r = 1.0;
+//     info[i]->l = 0.0;
+//     info[i]->mid = 0.5;
+//     info[i]->best_less_mid = 1.0;
+//     info[i]->best_larger_mid = 0.0;
+//     info[i]->best_less_count = 0;
+//     info[i]->best_larger_count = col;
+//     info[i]->total_larger_count = 0;
+//     info[i]->begin_pos = 0;
+//     info[i]->random_pos = 100000000;
+//   }
+//   // if (threadIdx.x == 0) printf("info[i]->best_larger_count = %d\n", info[0]->best_larger_count);
+// }
+
+__global__ void InitStepInfo(StepInfo* info, int col, int level) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < level; i += gridDim.x * blockDim.x) {
-    info[i]->r = 1.0;
-    info[i]->l = 0.0;
-    info[i]->mid = 0.5;
-    info[i]->best_less_mid = 1.0;
-    info[i]->best_larger_mid = 0.0;
-    info[i]->best_less_count = 0;
-    info[i]->best_larger_count = col;
-    info[i]->total_larger_count = 0;
-    info[i]->begin_pos = 0;
-    info[i]->random_pos = 100000000;
+    info[i].r = 1.0;
+    info[i].l = 0.0;
+    info[i].mid = 0.5;
+    // info[i].min = 0.0;
+    info[i].best_less_mid = 1.0;
+    info[i].best_larger_mid = 0.0;
+    info[i].best_less_count = 0;
+    info[i].best_larger_count = col;
+    info[i].total_larger_count = 0;
+    info[i].begin_pos = 0;
+    info[i].random_pos = 100000000;
   }
   // if (threadIdx.x == 0) printf("info[i]->best_larger_count = %d\n", info[0]->best_larger_count);
 }
 
-__global__ void InitStepInfoMax_Min(StepInfo** info, float* tmp_max, float* tmp_min, int level) {
+__global__ void InitStepInfoMax_Min(StepInfo* info, float* tmp_max, float* tmp_min, int level) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < level; i += gridDim.x * blockDim.x) {
-    info[i]->max = tmp_max[i];
-    info[i]->min = tmp_min[i];
-    // printf("info[%d]->max = %f\n", i, info[i]->max);
-    // printf("info[%d]->min = %f\n", i, info[i]->min);
+    info[i].max = tmp_max[i];
+    info[i].min = tmp_min[i];
+
+    // printf("info[%d].max = %f\n", i, info[i].max);
+    // printf("info[%d].min = %f\n", i, info[i].min);
   }
 }
 
 int GetTopkComBufferSize(int block_size, int block_count, int random_times, int size, int level) {
-  return 1024 * sizeof(int) + 1024 * sizeof(float) + level * sizeof(StepInfo);
+  return 1024 * level * sizeof(int) + 1024 * level * sizeof(float) + level * sizeof(StepInfo);
 }
 
 __global__ void AddToLocalSum(int size, const float* input, float* local_sum) {
@@ -83,17 +102,14 @@ __global__ void MaxKernel(float *g_idata, float *g_odata, int size, int level, i
   // set thread ID
   unsigned int tid = threadIdx.x;
   
-  
   for(int k = 0; k < level; ++k){
     // __syncthreads();
     smem[tid] = 0;
+    __syncthreads();
+
     int i = blockIdx.x * blockDim.x + threadIdx.x + k * col;
     if(i < (k + 1) * col){
-    // if(true){
-
       smem[tid] = fabs(g_idata[i]);
-
-      // __syncthreads();
 
       for (i = i + blockIdx.x * blockDim.x; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
         float tmp = fabs(g_idata[i]);
@@ -140,20 +156,18 @@ __global__ void MaxKernel(float *g_idata, float *g_odata, int size, int level, i
           if(vsmem[tid] < vsmem[tid + 1]) vsmem[tid] = vsmem[tid +  1];
       }
 
-      // if(tid < 10)
-      //   printf("smem[%d] = %f\n", tid, smem[tid]);
+      __syncthreads();
 
       // write result for this block to global mem
-      if (tid == 0){
+      if (tid == 0){ 
         g_odata[blockIdx.x + grid * k] = smem[0];    
         // printf("g_odata[%d]=%f\n",blockIdx.x + grid * k,smem[0]);         
-        // if(gridDim.x == 0){
-        //   printf("g_odata")
+        // if(grid == 1){
+        //   printf("g_odata[%d]=%f\n",blockIdx.x + grid * k,smem[0]);        
         // }                        
       }
     }
   }
-
 }
 
 __global__ void MinKernel(float *g_idata, float *g_odata, int size, int level, int grid) {
@@ -163,7 +177,6 @@ __global__ void MinKernel(float *g_idata, float *g_odata, int size, int level, i
 
   // set thread ID
   unsigned int tid = threadIdx.x;
-  
 
   for(int k = 0; k < level; ++k){
     smem[tid] = 0;
@@ -172,70 +185,71 @@ __global__ void MinKernel(float *g_idata, float *g_odata, int size, int level, i
     // __syncthreads();
 
     if(i < (k + 1) * col){
-    // if(true){
-    smem[tid] = fabs(g_idata[i]);
+      // if(true){
+      smem[tid] = fabs(g_idata[i]);
 
-    // __syncthreads();
+      // __syncthreads();
 
-    for (i = i + blockIdx.x * blockDim.x; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
-      float tmp = fabs(g_idata[i]);
-      if (tmp < smem[tid])
-        smem[tid] = tmp;
-    }
+      for (i = i + blockIdx.x * blockDim.x; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
+        float tmp = fabs(g_idata[i]);
+        if (tmp < smem[tid])
+          smem[tid] = tmp;
+      }
 
-    __syncthreads();
+      __syncthreads();
 
-    // in-place reduction and complete unroll
-    if (blockDim.x >= 1024 && tid < 512) 
-      if (smem[tid] > smem[tid + 512] && smem[tid + 512] > 0)
-        smem[tid] = smem[tid + 512];
-  
-    __syncthreads();
-
-    if (blockDim.x >= 512 && tid < 256)
-      if (smem[tid] > smem[tid + 256] && smem[tid + 256] > 0)
-          smem[tid] = smem[tid + 256];
-
-    __syncthreads();
-
-    if (blockDim.x >= 256 && tid < 128)  
-      if (smem[tid] > smem[tid + 128] && smem[tid + 128] > 0)
-        smem[tid] = smem[tid + 128];
-
-    __syncthreads();
-
-    if (blockDim.x >= 128 && tid < 64)  
-      if (smem[tid] > smem[tid + 64] && smem[tid + 64] > 0)    
-        smem[tid] = smem[tid + 64];
-
-    __syncthreads();
-
-    // if(tid < 10)
-    //   printf("before: smem[%d] = %f\n", tid, smem[tid]);
-
-    // unrolling warp
+      // in-place reduction and complete unroll
+      if (blockDim.x >= 1024 && tid < 512) 
+        if (smem[tid] > smem[tid + 512] && smem[tid + 512] > 0)
+          smem[tid] = smem[tid + 512];
     
-    if (blockDim.x >= 64 && tid < 32)
-    {
-      volatile float *vsmem = smem;
-      if(vsmem[tid] > vsmem[tid + 32] && vsmem[tid + 32] > 0) vsmem[tid] = vsmem[tid + 32];
-      if(vsmem[tid] > vsmem[tid + 16] && vsmem[tid + 16] > 0) vsmem[tid] = vsmem[tid + 16];
-      if(vsmem[tid] > vsmem[tid + 8]&& vsmem[tid + 8] > 0) vsmem[tid] = vsmem[tid + 8];
-      if(vsmem[tid] > vsmem[tid + 4]&& vsmem[tid + 4] > 0) vsmem[tid] = vsmem[tid + 4];
-      if(vsmem[tid] > vsmem[tid + 2]&& vsmem[tid + 2] > 0) vsmem[tid] = vsmem[tid + 2];
-      if(vsmem[tid] > vsmem[tid + 1]&& vsmem[tid + 1] > 0) vsmem[tid] = vsmem[tid + 1];
-    }
+      __syncthreads();
 
-    // write result for this block to global mem
-    if (tid == 0) {
-      g_odata[blockIdx.x + grid * k] = smem[0];
-      // if(size == 5) printf("g_odata[%d] = %f\n", blockIdx.x + grid * k, g_odata[blockIdx.x + grid * k]);
-    }
+      if (blockDim.x >= 512 && tid < 256)
+        if (smem[tid] > smem[tid + 256] && smem[tid + 256] > 0)
+            smem[tid] = smem[tid + 256];
+
+      __syncthreads();
+
+      if (blockDim.x >= 256 && tid < 128)  
+        if (smem[tid] > smem[tid + 128] && smem[tid + 128] > 0)
+          smem[tid] = smem[tid + 128];
+
+      __syncthreads();
+
+      if (blockDim.x >= 128 && tid < 64)  
+        if (smem[tid] > smem[tid + 64] && smem[tid + 64] > 0)    
+          smem[tid] = smem[tid + 64];
+
+      __syncthreads();
+
+      // if(tid < 10)
+      //   printf("before: smem[%d] = %f\n", tid, smem[tid]);
+
+      // unrolling warp
+      
+      if (blockDim.x >= 64 && tid < 32)
+      {
+        volatile float *vsmem = smem;
+        if(vsmem[tid] > vsmem[tid + 32] && vsmem[tid + 32] > 0) vsmem[tid] = vsmem[tid + 32];
+        if(vsmem[tid] > vsmem[tid + 16] && vsmem[tid + 16] > 0) vsmem[tid] = vsmem[tid + 16];
+        if(vsmem[tid] > vsmem[tid + 8]&& vsmem[tid + 8] > 0) vsmem[tid] = vsmem[tid + 8];
+        if(vsmem[tid] > vsmem[tid + 4]&& vsmem[tid + 4] > 0) vsmem[tid] = vsmem[tid + 4];
+        if(vsmem[tid] > vsmem[tid + 2]&& vsmem[tid + 2] > 0) vsmem[tid] = vsmem[tid + 2];
+        if(vsmem[tid] > vsmem[tid + 1]&& vsmem[tid + 1] > 0) vsmem[tid] = vsmem[tid + 1];
+      }
+
+      // write result for this block to global mem
+      if (tid == 0) {
+        g_odata[blockIdx.x + grid * k] = smem[0];
+        // printf("g_odata[%d]=%f\n",blockIdx.x + grid * k,smem[0]);
+        // if(size == 5) printf("g_odata[%d] = %f\n", blockIdx.x + grid * k, g_odata[blockIdx.x + grid * k]);
+      }
     }
   }
 }
 
-__global__ void TopNumCudaKernel(StepInfo** info, const int size, const int kmax, float* in, int* larger_count, int level, int grid) {
+__global__ void TopNumCudaKernel(StepInfo* info, const int size, const int kmax, float* in, int* larger_count, int level, int grid) {
   
   // static share memory
   __shared__ int temp_num[1024];  
@@ -245,11 +259,11 @@ __global__ void TopNumCudaKernel(StepInfo** info, const int size, const int kmax
   int col = size/level;
 
   for(int k = 0; k < level; ++k){
-    if (info[k]->total_larger_count == kmax) {
+    if (info[k].total_larger_count == kmax) {
       continue;
     }
 
-    float thd = (info[k]->min) + info[k]->mid * (info[k]->max - info[k]->min);
+    float thd = (info[k].min) + info[k].mid * (info[k].max - info[k].min);
     // if(tid == 0) printf("thd = %f", thd);
 
     __syncthreads();
@@ -302,7 +316,7 @@ __global__ void TopNumCudaKernel(StepInfo** info, const int size, const int kmax
   }
 }
 
-__global__ void  SumNumCudaKernel(StepInfo** info, const int size, int* larger_count, const int kmax, int level, int grid) {
+__global__ void  SumNumCudaKernel(StepInfo* info, const int size, int* larger_count, const int kmax, int level, int grid) {
 
   // static shared memory
   __shared__ int smem[1024];
@@ -311,7 +325,7 @@ __global__ void  SumNumCudaKernel(StepInfo** info, const int size, int* larger_c
   int col = size/level;
 
   for(int k = 0; k < level; ++k){
-    if (info[k]->total_larger_count == kmax) {
+    if (info[k].total_larger_count == kmax) {
       continue;
     }
     __syncthreads();
@@ -357,65 +371,65 @@ __global__ void  SumNumCudaKernel(StepInfo** info, const int size, int* larger_c
 
     // write result for this block to global mem
     if (tid == 0){
-      info[k]->total_larger_count = smem[0];
+      info[k].total_larger_count = smem[0];
       // printf("info[%d]->total_larger_count = %d\n", k, info[k]->total_larger_count);
     }
   }
 }
 
-__global__ void UpdateRatioKernel(StepInfo** info, const int kmax, int level) {
+__global__ void UpdateRatioKernel(StepInfo* info, const int kmax, int level) {
   for(int k = 0; k < level; ++k){
-    if (info[k]->total_larger_count < kmax && info[k]->total_larger_count >= info[k]->best_less_count) {
-      info[k]->best_less_mid = info[k]->mid;
-      info[k]->best_less_count = info[k]->total_larger_count;
+    if (info[k].total_larger_count < kmax && info[k].total_larger_count >= info[k].best_less_count) {
+      info[k].best_less_mid = info[k].mid;
+      info[k].best_less_count = info[k].total_larger_count;
     }
-    if (info[k]->total_larger_count > kmax && info[k]->total_larger_count < info[k]->best_larger_count) {
-      info[k]->best_larger_mid = info[k]->mid;
-      info[k]->best_larger_count = info[k]->total_larger_count;
+    if (info[k].total_larger_count > kmax && info[k].total_larger_count < info[k].best_larger_count) {
+      info[k].best_larger_mid = info[k].mid;
+      info[k].best_larger_count = info[k].total_larger_count;
     }
 
     //if (threadIdx.x == 0) printf("larger_count = %d, k = %d\n", info->total_larger_count, kmax);
-    if (info[k]->total_larger_count == kmax) {
+    if (info[k].total_larger_count == kmax) {
       continue;
     }
 
-    if (info[k]->total_larger_count > kmax) {
-      info[k]->l = info[k]->mid;
+    if (info[k].total_larger_count > kmax) {
+      info[k].l = info[k].mid;
     } else {
-      info[k]->r = info[k]->mid;
+      info[k].r = info[k].mid;
     }  
-    info[k]->mid = (info[k]->l + info[k]->r) / 2;
+    info[k].mid = (info[k].l + info[k].r) / 2;
     // if (threadIdx.x == 0){
     //   printf("info[%d]->mid = %f\n", k, info[k]->mid);
     // }
   }
 }
 
-__global__ void SetRatioKernel1(StepInfo** info, const int kmax, int level) {
+__global__ void SetRatioKernel1(StepInfo* info, const int kmax, int level) {
   //if (threadIdx.x == 0) printf("best less_count = %d, k = %d\n", info->best_less_count, kmax);
   for(int k = 0; k < level; ++k){
-    if (info[k]->total_larger_count == kmax) {
+    if (info[k].total_larger_count == kmax) {
       continue;
     }
 
-    info[k]->mid = info[k]->best_less_mid;
-    info[k]->total_larger_count = 0;
+    info[k].mid = info[k].best_less_mid;
+    info[k].total_larger_count = 0;
   }
 }
 
-__global__ void SetRatioKernel2(StepInfo** info, const int kmax, int level) {
+__global__ void SetRatioKernel2(StepInfo* info, const int kmax, int level) {
   //printf("best larger_count = %d, k = %d, best_larget_mid = %f\n", info->best_larger_count, kmax, info->best_larger_mid);
   for(int k = 0; k < level; ++k){
-    if (info[k]->total_larger_count == kmax) {
+    if (info[k].total_larger_count == kmax) {
       continue;
     }
-    info[k]->mid = info[k]->best_larger_mid;
-    info[k]->begin_pos = info[k]->total_larger_count;
-    info[k]->total_larger_count = 0;
+    info[k].mid = info[k].best_larger_mid;
+    info[k].begin_pos = info[k].total_larger_count;
+    info[k].total_larger_count = 0;
   }
 }
 
-__global__ void TopkComCudaKernel(StepInfo** info, const int size, const int kmax, float* in, int* out, float* values, int* larger_count_perblock, int level, int grid) {
+__global__ void TopkComCudaKernel(StepInfo* info, const int size, const int kmax, float* in, int* out, float* values, int* larger_count_perblock, int level, int grid) {
 
   unsigned int tid = threadIdx.x;
 
@@ -424,13 +438,13 @@ __global__ void TopkComCudaKernel(StepInfo** info, const int size, const int kma
   int col = size/level;
 
   for(int k = 0; k < level; ++k){
-    int num_begin = info[k]->begin_pos;
+    int num_begin = info[k].begin_pos;
 
-    if (info[k]->total_larger_count > kmax - info[k]->begin_pos) {
-      num_begin -= (info[k]->random_pos % (info[k]->total_larger_count - (kmax - info[k]->begin_pos) + 1));
+    if (info[k].total_larger_count > kmax - info[k].begin_pos) {
+      num_begin -= (info[k].random_pos % (info[k].total_larger_count - (kmax - info[k].begin_pos) + 1));
     }
 
-    float thd = (info[k]->min) + info[k]->mid * (info[k]->max - info[k]->min);
+    float thd = (info[k].min) + info[k].mid * (info[k].max - info[k].min);
 
     if (larger_count_perblock[blockIdx.x + k * grid] != 0) {
       for (int i = 0 + k * grid; i < blockIdx.x + k * grid; i++) {
@@ -450,7 +464,7 @@ __global__ void TopkComCudaKernel(StepInfo** info, const int size, const int kma
       
       for (int i = blockIdx.x * blockDim.x + threadIdx.x + k * col; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
         if (fabs(in[i]) >= thd) {
-          if (num_begin >= info[k]->begin_pos && num_begin < kmax) {
+          if (num_begin >= info[k].begin_pos && num_begin < kmax) {
             out[num_begin + k * kmax] = i - k * col;
             values[num_begin + k * kmax] = in[i];
             in[i] = 0;
@@ -477,11 +491,12 @@ void TopkComFunctor(const cudaStream_t &s, int blocksize, int blockcount, int ra
     AddToLocalSum<<<grid, block, 0, s>>>(size, in, local_sum);
 
     int* larger_count = (int*)buffer;
-    float* temp = (float*)(larger_count + 1024);
-    StepInfo** info;
-    cudaMalloc((void**)&info, level * sizeof(StepInfo*));
+    float* temp = (float*)(larger_count + 1024 * level);
+    // StepInfo** info;
+    // cudaMalloc((void**)&info, level * sizeof(StepInfo*));
+    StepInfo* info = (StepInfo*)(temp + 1024 * level);
 
-    SetStepInfo<<<grid, block, 0, s>>>(temp, info, level);
+    // SetStepInfo<<<grid, block, 0, s>>>(temp, info, level);
     InitStepInfo<<<grid, block, 0, s>>>(info, col, level);
 
     MaxKernel<<<grid, block, 0, s>>>(local_sum, temp, size, level, grid.x);
@@ -507,7 +522,7 @@ void TopkComFunctor(const cudaStream_t &s, int blocksize, int blockcount, int ra
     SumNumCudaKernel<<<1, block, 0, s>>>(info, level * grid.x, larger_count, kmax, level, grid.x);
     TopkComCudaKernel<<<grid, block, 0, s>>>(info, size, kmax, local_sum, indices, values, larger_count, level, grid.x);
 
-    cudaFree(info);
+    // cudaFree(info);
 
 }
 
@@ -529,10 +544,12 @@ std::vector<torch::Tensor> tcmm_batched_topk(torch::Tensor a, int k)
     cudaStreamCreate(&s);
     float *input_d = a.data_ptr<float>();
     float *localsum_d, *tmp, *tmp_max, *tmp_min;
-    cudaMalloc((void **)&localsum_d, size);
     cudaMalloc((void **)&tmp, sizetmp);
+    cudaMalloc((void **)&localsum_d, size);
+
     cudaMalloc((void **)&tmp_max, level*sizeof(float));
     cudaMalloc((void **)&tmp_min, level*sizeof(float));
+    
     auto options_int =
         torch::TensorOptions()
             .dtype(torch::kInt32)
@@ -558,7 +575,6 @@ std::vector<torch::Tensor> tcmm_batched_topk(torch::Tensor a, int k)
     cudaFree(tmp_max);
     cudaFree(tmp_min);
     cudaStreamDestroy(s);
-
 
     std::vector<torch::Tensor> tuple;
     tuple.push_back(c);

@@ -30,7 +30,7 @@ def Batched_compress_tensor(tensor, ratio):
         print(tensor)
         print(value)
         print(index)
-        # index = index.to(dtype=torch.long)
+        index = index.to(dtype=torch.long)
         # values = tensor.data[index]
         # print(values)
 
@@ -43,14 +43,14 @@ class Data:
 if __name__ == "__main__":
     process_id = 0
     device = torch.device(f"cuda:{process_id}")
-    a = torch.rand([4, 1000000]).to(device)
+    a = torch.rand([32, 1000000]).to(device)
     data = Data(a)
 
     num_iterations = 1
     total_time_cuda = 0
 
     for _ in range(num_iterations):
-        total_time_cuda += Batched_compress_tensor(data.data, 0.2)
+        total_time_cuda += Batched_compress_tensor(data.data, 0.01)
 
     average_time_cuda = total_time_cuda / num_iterations 
     print("average_time_batched: ",average_time_cuda)

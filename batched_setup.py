@@ -2,7 +2,7 @@ import os
 from setuptools import setup
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension, _find_cuda_home
 
-os.system('pip uninstall -y tcmm')
+os.system('pip uninstall -y batched_tcmm')
 
 CUDA_DIR = _find_cuda_home()
 
