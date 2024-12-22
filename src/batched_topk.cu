@@ -59,7 +59,6 @@ __global__ void InitStepInfo(StepInfo* info, int col, int level) {
     info[i].r = 1.0;
     info[i].l = 0.0;
     info[i].mid = 0.5;
-    // info[i].min = 0.0;
     info[i].best_less_mid = 1.0;
     info[i].best_larger_mid = 0.0;
     info[i].best_less_count = 0;
@@ -103,9 +102,9 @@ __global__ void MaxKernel(float *g_idata, float *g_odata, int size, int level, i
   unsigned int tid = threadIdx.x;
   
   for(int k = 0; k < level; ++k){
-    // __syncthreads();
+    
     smem[tid] = 0;
-    __syncthreads();
+    // __syncthreads();
 
     int i = blockIdx.x * blockDim.x + threadIdx.x + k * col;
     if(i < (k + 1) * col){
@@ -492,11 +491,8 @@ void TopkComFunctor(const cudaStream_t &s, int blocksize, int blockcount, int ra
 
     int* larger_count = (int*)buffer;
     float* temp = (float*)(larger_count + 1024 * level);
-    // StepInfo** info;
-    // cudaMalloc((void**)&info, level * sizeof(StepInfo*));
     StepInfo* info = (StepInfo*)(temp + 1024 * level);
 
-    // SetStepInfo<<<grid, block, 0, s>>>(temp, info, level);
     InitStepInfo<<<grid, block, 0, s>>>(info, col, level);
 
     MaxKernel<<<grid, block, 0, s>>>(local_sum, temp, size, level, grid.x);
@@ -521,8 +517,6 @@ void TopkComFunctor(const cudaStream_t &s, int blocksize, int blockcount, int ra
     TopNumCudaKernel<<<grid, block, 0, s>>>(info, size, kmax, local_sum, larger_count, level, grid.x);
     SumNumCudaKernel<<<1, block, 0, s>>>(info, level * grid.x, larger_count, kmax, level, grid.x);
     TopkComCudaKernel<<<grid, block, 0, s>>>(info, size, kmax, local_sum, indices, values, larger_count, level, grid.x);
-
-    // cudaFree(info);
 
 }
 
@@ -567,13 +561,14 @@ std::vector<torch::Tensor> tcmm_batched_topk(torch::Tensor a, int k)
     int *index_d = b.data_ptr<int>();
     float *output_d = c.data_ptr<float>();
     TopkComFunctor(s, block_size, block_count, random_times, level, a_count, col, k, input_d, localsum_d, tmp, tmp_max, tmp_min, output_d, index_d);
-    
+
     cudaStreamSynchronize(s);
 
     cudaFree(localsum_d);
     cudaFree(tmp);
     cudaFree(tmp_max);
     cudaFree(tmp_min);
+
     cudaStreamDestroy(s);
 
     std::vector<torch::Tensor> tuple;

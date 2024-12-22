@@ -4,14 +4,28 @@ from torch import nn
 
 from mpi4py import MPI
 
-
 import numpy as np
 import tcmm
 import time
 
-
 import threading
 
+def generate_tensor_sizes():
+    """生成从1K到1G的所有tensor_size"""
+    tensor_sizes = []
+    size = 1024  # 1K
+    while size <= 1024 * 1024 * 1024:  # 1G
+        tensor_sizes.append(size)
+        size *= 2  # 生成1024, 2048, 4096, ..., 1G
+    return tensor_sizes
+
+def generate_levels():
+    """返回level的取值"""
+    return [4, 8, 16, 32, 64]
+
+def generate_cols(tensor_sizes, level):
+    """计算每个tensor_size对应的col值"""
+    return [tensor_size // level for tensor_size in tensor_sizes]
 
 def compress_tensor(tensor, ratio):
 
@@ -29,9 +43,9 @@ def compress_tensor(tensor, ratio):
         end_time_cuda = time.perf_counter()
         total_time = end_time_cuda - start_time_cuda
 
-        print(tensor)
-        print(value)
-        print(index)
+        # print(tensor)
+        # print(value)
+        # print(index)
         return total_time
         # value = np.
 
@@ -61,20 +75,47 @@ def compress_tensor(tensor, ratio):
         # index = index.cpu()
         # print(value)
 
+def write_results_to_file(results, filename="MSTopK_results.txt"):
+    """将处理结果写入文件"""
+    with open(filename, 'w') as f:
+        for result in results:
+             f.write(f"batches={result[0]} tensor_size={result[1]} total_time={result[2]}\n")
+
 class Data:
     def __init__(self, data):
         self.data = data
 
-
 if __name__ == "__main__":
-    process_id = 0
+    process_id = 1
     device = torch.device(f"cuda:{process_id}")
-    a = torch.rand([5]).to(device)
-    data = Data(a)
+    
+    results = []
+    levels = generate_levels()
+    tensor_sizes = generate_tensor_sizes()
 
-    num_iterations = 1
-    total_time_cuda = 0
-    total_time_1t = 0
+    # col = int(tensor_size / level)
+
+    for level in levels:
+        print(level)
+        cols = generate_cols(tensor_sizes, level)
+        for col in cols:
+            total_time = 0.0
+            for i in range(level):
+                a = torch.rand([col]).to(device)
+                data = Data(a)
+                MSTopK_time = compress_tensor(data.data, 0.01)    
+                total_time += MSTopK_time
+                # print(level, col, total_time)
+            results.append((level, col * level, total_time))
+    
+    write_results_to_file(results)
+    print("Results written to 'results.txt'.")
+    
+    # print("total_time:",total_time) 
+
+    # num_iterations = 1
+    # total_time_cuda = 0
+    # total_time_1t = 0
 
     # for _ in range(num_iterations):
     #     level = 5
@@ -84,7 +125,7 @@ if __name__ == "__main__":
     # average_time_cuda = total_time_1t / num_iterations 
     # print("average_time_cuda:",average_time_cuda)
 
-    compress_tensor(data.data, 0.2)    
+    
 
     # print("======================================================")
     # linear = nn.Linear(5, 5)
