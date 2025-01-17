@@ -265,11 +265,11 @@ __global__ void TopNumCudaKernel(StepInfo* info, const int size, const int kmax,
     float thd = (info[k].min) + info[k].mid * (info[k].max - info[k].min);
     // if(tid == 0) printf("thd = %f", thd);
 
-    __syncthreads();
+    // __syncthreads();
 
     temp_num[tid] = 0;  
 
-    __syncthreads();
+    // __syncthreads();
 
     for (int i = blockIdx.x * blockDim.x + threadIdx.x + k * col; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
       temp_num[tid] += (fabs(in[i]) >= thd);
@@ -277,42 +277,99 @@ __global__ void TopNumCudaKernel(StepInfo* info, const int size, const int kmax,
 
     __syncthreads();
 
-    if (blockDim.x >= 1024 && tid < 512)
-      temp_num[tid] += temp_num[tid + 512];
+    // if (blockDim.x >= 1024 && tid < 512)
+    //   temp_num[tid] += temp_num[tid + 512];
 
-    __syncthreads();
+    // __syncthreads();
 
-    if (blockDim.x >= 512 && tid < 256)
-      temp_num[tid] += temp_num[tid + 256];
+    // if (blockDim.x >= 512 && tid < 256)
+    //   temp_num[tid] += temp_num[tid + 256];
 
-    __syncthreads();
+    // __syncthreads();
 
-    if (blockDim.x >= 256 && tid < 128)
-      temp_num[tid] += temp_num[tid + 128];
+    // if (blockDim.x >= 256 && tid < 128)
+    //   temp_num[tid] += temp_num[tid + 128];
 
-    __syncthreads();
+    // __syncthreads();
 
-    if (blockDim.x >= 128 && tid < 64)
-      temp_num[tid] += temp_num[tid + 64];
+    // if (blockDim.x >= 128 && tid < 64)
+    //   temp_num[tid] += temp_num[tid + 64];
 
-    __syncthreads();
+    // __syncthreads();
 
-    // unrolling warp
-    // share memory
-    if (blockDim.x >= 64 && tid < 32) {
-      volatile int *vsmem = temp_num;
-      vsmem[tid] += vsmem[tid + 32];
-      vsmem[tid] += vsmem[tid + 16];
-      vsmem[tid] += vsmem[tid + 8]; 
-      vsmem[tid] += vsmem[tid + 4]; 
-      vsmem[tid] += vsmem[tid + 2]; 
-      vsmem[tid] += vsmem[tid + 1];
+    // // unrolling warp
+    // // share memory
+    // if (blockDim.x >= 64 && tid < 32) {
+    //   volatile int *vsmem = temp_num;
+    //   vsmem[tid] += vsmem[tid + 32];
+    //   vsmem[tid] += vsmem[tid + 16];
+    //   vsmem[tid] += vsmem[tid + 8]; 
+    //   vsmem[tid] += vsmem[tid + 4]; 
+    //   vsmem[tid] += vsmem[tid + 2]; 
+    //   vsmem[tid] += vsmem[tid + 1];
+    // }
+
+    // 使用 warp-level 原语优化归约
+    int local_sum = temp_num[tid];
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+        local_sum += __shfl_down_sync(0xFFFFFFFF, local_sum, offset);
     }
+    if (tid % warpSize == 0) temp_num[tid / warpSize] = local_sum;
+
+    __syncthreads();
+
+    if (tid < blockDim.x / warpSize) {
+        local_sum = temp_num[tid];
+        for (int offset = blockDim.x / warpSize / 2; offset > 0; offset /= 2) {
+            local_sum += __shfl_down_sync(0xFFFFFFFF, local_sum, offset);
+        }
+        if (tid == 0) temp_num[0] = local_sum;
+    }
+
     if (tid == 0) {
       larger_count[blockIdx.x + grid * k] = temp_num[0];
       // printf("%d larger_count = %d\n", blockIdx.x, larger_count[blockIdx.x]);
     }
   }
+
+  // 每个 block 处理一个 level
+  // int k = blockIdx.y;
+  // if (k >= level) return;
+
+  // if (info[k].total_larger_count == kmax) return;
+
+  // float thd = info[k].min + info[k].mid * (info[k].max - info[k].min);
+
+  // temp_num[tid] = 0;
+
+  // // 合并内存访问，处理多个列
+  // for (int i = blockIdx.x * blockDim.x + tid + k * col; i < (k + 1) * col; i += gridDim.x * blockDim.x) {
+  //     temp_num[tid] += (fabs(in[i]) >= thd);
+  // }
+
+  // __syncthreads();
+
+  // // 使用 warp-level 原语优化归约
+  // int local_sum = temp_num[tid];
+  // for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+  //     local_sum += __shfl_down_sync(0xFFFFFFFF, local_sum, offset);
+  // }
+  // if (tid % warpSize == 0) temp_num[tid / warpSize] = local_sum;
+
+  // __syncthreads();
+
+  // if (tid < blockDim.x / warpSize) {
+  //     local_sum = temp_num[tid];
+  //     for (int offset = blockDim.x / warpSize / 2; offset > 0; offset /= 2) {
+  //         local_sum += __shfl_down_sync(0xFFFFFFFF, local_sum, offset);
+  //     }
+  //     if (tid == 0) temp_num[0] = local_sum;
+  // }
+
+  // if (tid == 0) {
+  //     larger_count[blockIdx.x + grid * k] = temp_num[0];
+  // }
+
 }
 
 __global__ void  SumNumCudaKernel(StepInfo* info, const int size, int* larger_count, const int kmax, int level, int grid) {
@@ -529,7 +586,7 @@ std::vector<torch::Tensor> tcmm_batched_topk(torch::Tensor a, int k)
     int n = a.numel();
     int block_size = 1024;
     int block_count = 256;
-    int random_times = 30;
+    int random_times = 10;
     int size = n * sizeof(float);
     const auto current_device = c10::cuda::current_device();
     c10::cuda::set_device(a.get_device());

@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Load the data from the text file
-file_path = "MSTopK_results.txt"
+file_path = "MSTopK_results_2080ti.txt"
 data = []
 with open(file_path, "r") as file:
     for line in file:
@@ -32,12 +32,12 @@ plt.xscale("log")
 plt.yscale("log")
 plt.xlabel("Tensor Size", fontsize=14)
 plt.ylabel("Total Time (s)", fontsize=14)
-plt.title("MSTopK", fontsize=16)
+plt.title("MSTopK_2080ti", fontsize=16)
 plt.legend(title="Batch Sizes", fontsize=12)
 plt.grid(True, which="both", linestyle="--", linewidth=0.5)
 plt.tight_layout()
 
 # Save and display the plot
-output_path = "MSTopK.png"
+output_path = "MSTopK_2080ti.png"
 plt.savefig(output_path)
 plt.show()
