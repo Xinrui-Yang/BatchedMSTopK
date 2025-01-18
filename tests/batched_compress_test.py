@@ -27,9 +27,9 @@ def Batched_compress_tensor(tensor, ratio):
         end_time_cuda = time.perf_counter()
         total_time = end_time_cuda - start_time_cuda
 
-        print(tensor)
-        print(value)
-        print(index)
+        # print(tensor)
+        # print(value)
+        # print(index)
 
         # index = index.to(dtype=torch.long)
         # values = tensor.data[index]
